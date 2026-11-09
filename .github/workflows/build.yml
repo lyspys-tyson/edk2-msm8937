@@ -83,6 +83,9 @@ jobs:
           BUILD_ARGS: ${{ inputs.build_args }}
         run: |
           export EDK_TOOLS_PATH=$GITHUB_WORKSPACE/edk2/BaseTools
+          export PACKAGES_PATH=$GITHUB_WORKSPACE/edk2:$GITHUB_WORKSPACE/edk2-platforms:$GITHUB_WORKSPACE/edk2-msm8937
+          mkdir -p workspace
+          export WORKSPACE=$PWD/workspace
           source ../edk2/edksetup.sh BaseTools
 
           if [ -f scripts/build.sh ]; then
