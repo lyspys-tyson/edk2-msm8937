@@ -1,30 +1,49 @@
-name: C/C++ CI
+name: Debug firmware build
 
 on:
   push:
-    branches: [ "sdcard" ]
+    branches: ["sdcard"]
   pull_request:
-    branches: [ "sdcard" ]
+    branches: ["sdcard"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
 
     steps:
-    - uses: actions/checkout@v4.1.5
-    - name: CI Build
-      run: chmod +x ci-build.sh && ./ci-build.sh
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - uses: actions/upload-artifact@v3
-      with:
-        name: Y560
-        path: ./workspace/Y560.img
-    - uses: actions/upload-artifact@v3
-      with:
-        name: Lumia 650
-        path: ./workspace/emmc_appsboot.mbn
-    - uses: actions/upload-artifact@v3
-      with:
-        name: E1M
-        path: ./workspace/E1M.img
+      - name: Build firmware
+        run: |
+          chmod +x ci-build.sh
+          ./ci-build.sh
+
+      - name: Show build outputs
+        if: always()
+        run: |
+          echo "=== Repository root ==="
+          find . -maxdepth 2 -type f \
+            \( -name '*.img' -o -name '*.mbn' -o -name '*.fd' -o -name 'Image.gz*' \) \
+            -printf '%p (%s bytes)\n' | sort || true
+
+          echo "=== workspace ==="
+          find workspace -maxdepth 6 -type f -printf '%p (%s bytes)\n' 2>/dev/null | sort || true
+
+      - name: Upload land firmware
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: land-firmware
+          path: |
+            boot-land.img
+            workspace/Build/MSM8909Pkg/DEBUG_GCC5/FV/MSM8909PKG_UEFI.fd
+          if-no-files-found: warn
+          compression-level: 0
