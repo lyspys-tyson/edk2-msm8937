@@ -61,6 +61,16 @@ jobs:
         run: |
           git submodule update --init --recursive CryptoPkg/Library/OpensslLib/openssl
           git submodule update --init --recursive CryptoPkg/Library/MbedTlsLib/mbedtls
+          # Нужен для make -C BaseTools (BrotliCompress)
+          git submodule update --init --recursive BaseTools/Source/C/BrotliCompress/brotli
+          # Нужны самой прошивке; не критично, если какого-то пути нет
+          for p in \
+            MdeModulePkg/Library/BrotliCustomDecompressLib/brotli \
+            MdeModulePkg/Universal/RegularExpressionDxe/oniguruma \
+            ArmPkg/Library/ArmSoftFloatLib/berkeley-softfloat-3 \
+            MdePkg/Library/BaseFdtLib/libfdt; do
+            git submodule update --init --recursive "$p" || echo "::warning::submodule $p не удалось инициализировать"
+          done
 
       - name: Build BaseTools
         working-directory: edk2
