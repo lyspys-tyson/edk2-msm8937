@@ -6,7 +6,7 @@ on:
       port_repo:
         description: "Репозиторий порта (owner/name)"
         required: false
-        default: "vicenteicc2008/edk2-msm8937"
+        default: "vizPilot/edk2-msm8937"
         type: string
       port_ref:
         description: "Ветка/тег порта (пусто = ветка по умолчанию)"
@@ -206,44 +206,50 @@ jobs:
             fi
           fi
 
-      - name: Collect built images
+      - name: Collect UEFI images
         if: always()
         shell: bash
         run: |
           cd "$GITHUB_WORKSPACE"
-          mkdir -p artifacts
-          if [ -f .build-start ]; then
-            # Всё, что собралось во время сборки, где бы оно ни лежало
-            # (edk2-msm8937/, edk2-msm8937/workspace/Build, edk2/Build, корень workspace)
+          mkdir -p artifacts/UEFI-IMG artifacts/FIRMWARE-FILES
+
+          echo "=== Searching for firmware images ==="
+          while IFS= read -r -d '' file; do
+            relative="${file#./}"
+            safe_name="${relative//\//__}"
+
+            case "$file" in
+              *.img)
+                cp -f "$file" "artifacts/UEFI-IMG/$safe_name"
+                echo "IMG: $file"
+                ;;
+              *.img.gz|*.img.gz-dtb|*.fd)
+                cp -f "$file" "artifacts/FIRMWARE-FILES/$safe_name"
+                echo "FIRMWARE: $file"
+                ;;
+            esac
+          done < <(
             find . -type f \
-              \( -name '*.img' -o -name '*.img.gz' -o -name '*.img.gz-dtb' -o -name '*.fd' -o -name '*.bin' \) \
-              -newer .build-start \
-              -not -path '*/.git/*' -not -path './artifacts/*' \
-              -not -path '*/OUTPUT/*' -not -path '*/DEBUG/*' -not -path '*/FV/Ffs/*' \
-              -print0 | while IFS= read -r -d '' f; do
-                mkdir -p "artifacts/$(dirname "$f")"
-                cp "$f" "artifacts/$f"
-              done
-          fi
+              \( -name '*.img' -o -name '*.img.gz' -o -name '*.img.gz-dtb' -o -name '*.fd' \) \
+              -not -path '*/.git/*' \
+              -not -path './artifacts/*' \
+              -size +0c \
+              -print0
+          )
 
-          echo "::group::Собранные файлы"
-          find artifacts -type f -printf '%p  (%s байт)\n' | sort
-          echo "::endgroup::"
+          echo "=== Collected files ==="
+          find artifacts -type f -printf '%p (%s bytes)\n' | sort
 
-          if ! find artifacts -type f \( -name '*.img*' -o -name '*.fd' \) | grep -q .; then
-            echo "::error::Образ (*.img / *.fd) не создан: скрипт сборки отработал, но результата нет. Найдите первую ошибку в логе шага Build firmware."
+          if ! find artifacts/UEFI-IMG -type f -name '*.img' -size +0c | grep -q .; then
+            echo "::error::Готовый .img не найден. Проверьте лог Build firmware: скрипт устройства должен сам создать UEFI .img. Файлы .fd не являются готовым Android boot .img."
             exit 1
           fi
 
-      - name: Upload artifacts
+      - name: Upload UEFI artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: edk2-uefi-images
-          path: |
-            artifacts/**
-            edk2-msm8937/**/*.img
-            edk2-msm8937/**/*.bin
-            edk2-msm8937/workspace/Build/**/*.fd
-            workspace/Build/**/*.fd
+          name: UEFI-IMG
+          path: artifacts/
           if-no-files-found: warn
+          compression-level: 0
