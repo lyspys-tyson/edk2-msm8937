@@ -1,0 +1,28 @@
+name: Build lk2nd
+
+on:
+  workflow_dispatch: # Позволяет запускать сборку вручную кнопкой
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential libgmp-dev libmpfr-dev libmpc-dev libssl-dev bison flex libelf-dev bc git parallel gcc-arm-none-eabi gcc-aarch64-linux-gnu
+
+    - name: Build
+      run: |
+        make TOOLCHAIN_PREFIX=arm-none-eabi- msm8952
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: lk2nd-build
+        path: build-msm8952/lk2nd.img
