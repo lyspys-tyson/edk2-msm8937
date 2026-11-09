@@ -24,6 +24,9 @@ on:
         default: ""
         type: string
 
+permissions:
+  contents: read
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
@@ -33,13 +36,15 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - name: Install dependencies
+        shell: bash
         run: |
+          set -Eeuo pipefail
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential \
             uuid-dev \
             iasl \
@@ -62,6 +67,7 @@ jobs:
           ref: edk2-stable202405
           path: edk2
           submodules: false
+          fetch-depth: 1
 
       - name: Checkout edk2-platforms
         uses: actions/checkout@v4
@@ -69,21 +75,23 @@ jobs:
           repository: tianocore/edk2-platforms
           path: edk2-platforms
           submodules: false
+          fetch-depth: 1
 
-      - name: Checkout edk2-msm8937
+      - name: Checkout port repo
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.port_repo }}
           ref: ${{ inputs.port_ref }}
           path: edk2-msm8937
           submodules: false
+          fetch-depth: 0
 
       - name: Init live edk2 submodules (skip broken subhook)
         working-directory: edk2
         shell: bash
         run: |
-          # Подмодуль Zeex/subhook удалён (404): помечаем его как "не обновлять",
-          # чтобы любой git submodule update (в т.ч. из скриптов порта) его пропускал.
+          set -Eeuo pipefail
+
           while read -r key url; do
             case "$url" in
               *subhook*)
@@ -94,28 +102,32 @@ jobs:
             esac
           done < <(git config -f .gitmodules --get-regexp '^submodule\..*\.url$')
 
-          # Обязательные подмодули
-          git submodule update --init --recursive CryptoPkg/Library/OpensslLib/openssl
-          git submodule update --init --recursive CryptoPkg/Library/MbedTlsLib/mbedtls
-          # Нужен для make -C BaseTools (BrotliCompress)
-          git submodule update --init --recursive BaseTools/Source/C/BrotliCompress/brotli
+          git submodule update --init --recursive CryptoPkg/Library/OpensslLib/openssl || true
+          git submodule update --init --recursive CryptoPkg/Library/MbedTlsLib/mbedtls || true
+          git submodule update --init --recursive BaseTools/Source/C/BrotliCompress/brotli || true
 
-          # Остальные живые подмодули (нужны самой прошивке); subhook пропускаем
-          for p in $(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}' | grep -vi subhook); do
+          while IFS= read -r p; do
+            case "$p" in
+              *subhook*) continue ;;
+            esac
             git submodule update --init --recursive "$p" || echo "::warning::не удалось инициализировать подмодуль $p"
-          done
+          done < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}')
 
       - name: Init port submodules (best-effort)
         working-directory: edk2-msm8937
         shell: bash
         run: |
+          set -Eeuo pipefail
           if [ -f .gitmodules ]; then
             git submodule update --init --recursive || echo "::warning::не все подмодули порта удалось инициализировать"
           fi
 
       - name: Build BaseTools
         working-directory: edk2
-        run: make -C BaseTools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          make -C BaseTools
 
       - name: Build firmware
         working-directory: edk2-msm8937
@@ -124,12 +136,15 @@ jobs:
           DEVICE: ${{ inputs.device }}
           BUILD_ARGS: ${{ inputs.build_args }}
         run: |
+          set -Eeuo pipefail
           touch "$GITHUB_WORKSPACE/.build-start"
-          export EDK_TOOLS_PATH=$GITHUB_WORKSPACE/edk2/BaseTools
-          export PACKAGES_PATH=$GITHUB_WORKSPACE/edk2:$GITHUB_WORKSPACE/edk2-platforms:$GITHUB_WORKSPACE/edk2-msm8937
+
+          export EDK_TOOLS_PATH="$GITHUB_WORKSPACE/edk2/BaseTools"
+          export PACKAGES_PATH="$GITHUB_WORKSPACE/edk2:$GITHUB_WORKSPACE/edk2-platforms:$GITHUB_WORKSPACE/edk2-msm8937"
           mkdir -p workspace
-          export WORKSPACE=$PWD/workspace
-          source ../edk2/edksetup.sh BaseTools
+          export WORKSPACE="$PWD/workspace"
+
+          source "$GITHUB_WORKSPACE/edk2/edksetup.sh" BaseTools
 
           echo "::group::Содержимое репозитория порта"
           ls -la
@@ -145,39 +160,48 @@ jobs:
             return $rc
           }
 
+          read -r -a EXTRA_ARGS <<< "${BUILD_ARGS:-}"
+
           FIRSTRUN=""
           for f in scripts/firstrun.sh firstrun.sh; do
-            if [ -f "$f" ]; then FIRSTRUN="$f"; break; fi
+            if [ -f "$f" ]; then
+              FIRSTRUN="$f"
+              break
+            fi
           done
 
           if [ -f scripts/build.sh ]; then
-            # shellcheck disable=SC2086
-            run_script scripts/build.sh $BUILD_ARGS
+            run_script scripts/build.sh "${EXTRA_ARGS[@]}"
+            exit $?
           elif [ -f build_device.sh ]; then
-            # shellcheck disable=SC2086
-            run_script build_device.sh $BUILD_ARGS
+            run_script build_device.sh "${EXTRA_ARGS[@]}"
+            exit $?
           else
-            # Раскладка vizPilot/edk2-msm8937: scripts/firstrun.sh + scripts/<устройство>.sh
             if [ -n "$FIRSTRUN" ]; then
               run_script "$FIRSTRUN"
             fi
 
-            CANDIDATES=""
-            if [ -n "$DEVICE" ]; then
+            CANDIDATES=()
+            if [ -n "${DEVICE:-}" ]; then
               for f in "scripts/$DEVICE.sh" "$DEVICE.sh" "scripts/$DEVICE"; do
-                if [ -f "$f" ]; then CANDIDATES="$f"; break; fi
+                if [ -f "$f" ]; then
+                  CANDIDATES=("$f")
+                  break
+                fi
               done
-              if [ -z "$CANDIDATES" ]; then
-                echo "::error::Скрипт устройства '$DEVICE' не найден (искал scripts/$DEVICE.sh и $DEVICE.sh)"
+              if [ ${#CANDIDATES[@]} -eq 0 ]; then
+                echo "::error::Скрипт устройства '$DEVICE' не найден (искал scripts/$DEVICE.sh, $DEVICE.sh, scripts/$DEVICE)"
                 exit 1
               fi
             elif [ -f build.sh ]; then
-              CANDIDATES="build.sh"
+              CANDIDATES=("build.sh")
             else
-              CANDIDATES=$(ls scripts/*.sh 2>/dev/null | grep -v '/firstrun\.sh$' || true)
+              while IFS= read -r f; do
+                [ -n "$f" ] && CANDIDATES+=("$f")
+              done < <(find scripts -maxdepth 1 -type f -name '*.sh' ! -name 'firstrun.sh' -print | sort)
             fi
 
-            if [ -z "$CANDIDATES" ]; then
+            if [ ${#CANDIDATES[@]} -eq 0 ]; then
               echo "::error::Не найден ни scripts/build.sh, ни build_device.sh, ни скрипты устройств в scripts/"
               ls -R . | head -100
               exit 1
@@ -185,18 +209,22 @@ jobs:
 
             mkdir -p out
             BUILT=0
-            for S in $CANDIDATES; do
+
+            for S in "${CANDIDATES[@]}"; do
               name=$(basename "$S" .sh)
-              # shellcheck disable=SC2086
-              if run_script "$S" $BUILD_ARGS; then
+              if run_script "$S" "${EXTRA_ARGS[@]}"; then
                 BUILT=$((BUILT + 1))
                 mkdir -p "out/$name"
                 for f in ./*.img; do
-                  if [ -f "$f" ]; then cp "$f" "out/$name/"; fi
+                  if [ -f "$f" ]; then
+                    cp -f "$f" "out/$name/"
+                  fi
                 done
               else
                 echo "::warning::Скрипт $S завершился с ошибкой"
-                if [ -n "$DEVICE" ]; then exit 1; fi
+                if [ -n "${DEVICE:-}" ]; then
+                  exit 1
+                fi
               fi
             done
 
@@ -210,6 +238,7 @@ jobs:
         if: always()
         shell: bash
         run: |
+          set -Eeuo pipefail
           cd "$GITHUB_WORKSPACE"
           mkdir -p artifacts/UEFI-IMG artifacts/FIRMWARE-FILES
 
@@ -241,7 +270,7 @@ jobs:
           find artifacts -type f -printf '%p (%s bytes)\n' | sort
 
           if ! find artifacts/UEFI-IMG -type f -name '*.img' -size +0c | grep -q .; then
-            echo "::error::Готовый .img не найден. Проверьте лог Build firmware: скрипт устройства должен сам создать UEFI .img. Файлы .fd не являются готовым Android boot .img."
+            echo "::error::Готовый .img не найден. Проверьте лог Build firmware: скрипт устройства должен сам создавать UEFI .img."
             exit 1
           fi
 
