@@ -1,69 +1,96 @@
-name: Build EDK2 UEFI
+name: Build EDK2 UEFI (MSM8937/MSM8917)
 
 on:
   workflow_dispatch:
+    inputs:
+      build_args:
+        description: "Доп. аргументы для скрипта сборки (например: -d DEVICE)"
+        required: false
+        default: ""
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+  GCC5_AARCH64_PREFIX: aarch64-linux-gnu-
+  GCC5_ARM_PREFIX: arm-linux-gnueabi-
 
 jobs:
-  build-uefi:
+  build:
     runs-on: ubuntu-22.04
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
 
     steps:
-    - name: Install Dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y build-essential uuid-dev iasl git nasm python3-distutils crossbuild-essential-armel gcc-aarch64-linux-gnu abootimg
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            uuid-dev \
+            iasl \
+            git \
+            nasm \
+            python3-distutils \
+            crossbuild-essential-armel \
+            gcc-aarch64-linux-gnu \
+            abootimg
 
-    - name: Clone EDK2 base
-      uses: actions/checkout@v4
-      with:
-        repository: tianocore/edk2
-        ref: edk2-stable202405
-        submodules: recursive
-        path: edk2
+      - name: Checkout edk2
+        uses: actions/checkout@v4
+        with:
+          repository: tianocore/edk2
+          ref: edk2-stable202405
+          path: edk2
+          submodules: false
 
-    - name: Clone EDK2 platforms
-      uses: actions/checkout@v4
-      with:
-        repository: tianocore/edk2-platforms
-        path: edk2-platforms
+      - name: Checkout edk2-platforms
+        uses: actions/checkout@v4
+        with:
+          repository: tianocore/edk2-platforms
+          path: edk2-platforms
+          submodules: false
 
-    - name: Checkout Current Repo (Port)
-      uses: actions/checkout@v4
-      with:
-        path: edk2-msm8937
+      - name: Checkout edk2-msm8937
+        uses: actions/checkout@v4
+        with:
+          repository: vicenteicc2008/edk2-msm8937
+          path: edk2-msm8937
+          submodules: false
 
-    - name: Compile EDK2 BaseTools
-      run: |
-        cd edk2
-        make -C BaseTools
+      - name: Init live edk2 submodules (skip broken subhook)
+        working-directory: edk2
+        run: |
+          git submodule update --init --recursive CryptoPkg/Library/OpensslLib/openssl
+          git submodule update --init --recursive CryptoPkg/Library/MbedTlsLib/mbedtls
 
-    - name: Build UEFI Image
-      run: |
-        cd edk2-msm8937
-        
-        # Задаем пути к BaseTools вручную, минуя кривой firstrun.sh
-        export EDK_TOOLS_PATH=$GITHUB_WORKSPACE/edk2/BaseTools
-        source ../edk2/edksetup.sh BaseTools
-        
-        chmod +x scripts/*.sh
-        
-        # Запуск компиляции устройства
-        if [ -f "./scripts/build.sh" ]; then
-          ./scripts/build.sh
-        elif [ -f "./scripts/build_device.sh" ]; then
-          ./scripts/build_device.sh
-        else
-          ./scripts/$(ls scripts/ | grep .sh | head -n 1)
-        fi
+      - name: Build BaseTools
+        working-directory: edk2
+        run: make -C BaseTools
 
-    - name: Upload Build Results
-      uses: actions/upload-artifact@v4
-      with:
-        name: edk2-uefi-images
-        path: |
-          edk2-msm8937/*.img
-          edk2-msm8937/*.bin
-          edk2-msm8937/workspace/Build/**/*.fd
+      - name: Build firmware
+        working-directory: edk2-msm8937
+        shell: bash
+        env:
+          BUILD_ARGS: ${{ inputs.build_args }}
+        run: |
+          export EDK_TOOLS_PATH=$GITHUB_WORKSPACE/edk2/BaseTools
+          source ../edk2/edksetup.sh BaseTools
+
+          if [ -f scripts/build.sh ]; then
+            bash scripts/build.sh $BUILD_ARGS
+          elif [ -f build_device.sh ]; then
+            bash build_device.sh $BUILD_ARGS
+          else
+            echo "::error::Не найден ни scripts/build.sh, ни build_device.sh"
+            exit 1
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: edk2-uefi-images
+          path: |
+            edk2-msm8937/**/*.img
+            edk2-msm8937/**/*.bin
+            edk2-msm8937/workspace/Build/**/*.fd
+            workspace/Build/**/*.fd
+          if-no-files-found: warn
