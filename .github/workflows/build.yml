@@ -141,10 +141,22 @@ jobs:
 
           export EDK_TOOLS_PATH="$GITHUB_WORKSPACE/edk2/BaseTools"
           export PACKAGES_PATH="$GITHUB_WORKSPACE/edk2:$GITHUB_WORKSPACE/edk2-platforms:$GITHUB_WORKSPACE/edk2-msm8937"
-          mkdir -p workspace
-          export WORKSPACE="$PWD/workspace"
+          export WORKSPACE="$GITHUB_WORKSPACE/workspace"
+          export CONF_PATH="$WORKSPACE/Conf"
 
+          mkdir -p "$WORKSPACE" "$CONF_PATH"
+
+          echo "::group::EDK2 setup"
+          echo "WORKSPACE=$WORKSPACE"
+          echo "CONF_PATH=$CONF_PATH"
+          echo "EDK_TOOLS_PATH=$EDK_TOOLS_PATH"
+          echo "PACKAGES_PATH=$PACKAGES_PATH"
+          echo "::endgroup::"
+
+          # Critical fix: edksetup.sh must be sourced with nounset disabled
+          set +u
           source "$GITHUB_WORKSPACE/edk2/edksetup.sh" BaseTools
+          set -u
 
           echo "::group::Содержимое репозитория порта"
           ls -la
