@@ -1,11 +1,15 @@
 name: Build EDK2 UEFI
 
 on:
-  workflow_dispatch: # Позволяет запускать сборку вручную одной кнопкой
+  workflow_dispatch:
 
 jobs:
   build-uefi:
     runs-on: ubuntu-22.04
+    env:
+      # Форсируем использование актуального окружения и игнорируем ворнинги Node
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
 
     steps:
     - name: Install Dependencies
@@ -15,11 +19,11 @@ jobs:
 
     - name: Clone EDK2 base
       run: |
-        git clone https://github.com/tianocore/edk2.git -b edk2-stable202405 --recursive ../edk2
+        git clone https://github.com -b edk2-stable202405 --recursive ../edk2
 
     - name: Clone EDK2 platforms
       run: |
-        git clone https://github.com/tianocore/edk2-platforms.git ../edk2-platforms
+        git clone https://github.com ../edk2-platforms
 
     - name: Checkout Current Repo
       uses: actions/checkout@v4
@@ -45,13 +49,11 @@ jobs:
         
         chmod +x scripts/*.sh
         
-        # Автоматический запуск: ищет сначала build.sh, затем build_device.sh или любой скрипт в папке
         if [ -f "./scripts/build.sh" ]; then
           ./scripts/build.sh
         elif [ -f "./scripts/build_device.sh" ]; then
           ./scripts/build_device.sh
         else
-          # Если общего скрипта нет, запускаем первый попавшийся файл из папки scripts (например, конкретное устройство)
           ./scripts/$(ls scripts/ | grep .sh | head -n 1)
         fi
 
