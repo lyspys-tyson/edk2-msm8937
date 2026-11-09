@@ -124,6 +124,7 @@ jobs:
           DEVICE: ${{ inputs.device }}
           BUILD_ARGS: ${{ inputs.build_args }}
         run: |
+          touch "$GITHUB_WORKSPACE/.build-start"
           export EDK_TOOLS_PATH=$GITHUB_WORKSPACE/edk2/BaseTools
           export PACKAGES_PATH=$GITHUB_WORKSPACE/edk2:$GITHUB_WORKSPACE/edk2-platforms:$GITHUB_WORKSPACE/edk2-msm8937
           mkdir -p workspace
@@ -205,11 +206,42 @@ jobs:
             fi
           fi
 
+      - name: Collect built images
+        if: always()
+        shell: bash
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p artifacts
+          if [ -f .build-start ]; then
+            # Всё, что собралось во время сборки, где бы оно ни лежало
+            # (edk2-msm8937/, edk2-msm8937/workspace/Build, edk2/Build, корень workspace)
+            find . -type f \
+              \( -name '*.img' -o -name '*.img.gz' -o -name '*.img.gz-dtb' -o -name '*.fd' -o -name '*.bin' \) \
+              -newer .build-start \
+              -not -path '*/.git/*' -not -path './artifacts/*' \
+              -not -path '*/OUTPUT/*' -not -path '*/DEBUG/*' -not -path '*/FV/Ffs/*' \
+              -print0 | while IFS= read -r -d '' f; do
+                mkdir -p "artifacts/$(dirname "$f")"
+                cp "$f" "artifacts/$f"
+              done
+          fi
+
+          echo "::group::Собранные файлы"
+          find artifacts -type f -printf '%p  (%s байт)\n' | sort
+          echo "::endgroup::"
+
+          if ! find artifacts -type f \( -name '*.img*' -o -name '*.fd' \) | grep -q .; then
+            echo "::error::Образ (*.img / *.fd) не создан: скрипт сборки отработал, но результата нет. Найдите первую ошибку в логе шага Build firmware."
+            exit 1
+          fi
+
       - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: edk2-uefi-images
           path: |
+            artifacts/**
             edk2-msm8937/**/*.img
             edk2-msm8937/**/*.bin
             edk2-msm8937/workspace/Build/**/*.fd
