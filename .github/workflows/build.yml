@@ -153,7 +153,6 @@ jobs:
           echo "PACKAGES_PATH=$PACKAGES_PATH"
           echo "::endgroup::"
 
-          # Critical fix: edksetup.sh must be sourced with nounset disabled
           set +u
           source "$GITHUB_WORKSPACE/edk2/edksetup.sh" BaseTools
           set -u
@@ -210,7 +209,11 @@ jobs:
             else
               while IFS= read -r f; do
                 [ -n "$f" ] && CANDIDATES+=("$f")
-              done < <(find scripts -maxdepth 1 -type f -name '*.sh' ! -name 'firstrun.sh' -print | sort)
+              done < <(find scripts -maxdepth 1 -type f -name '*.sh' \
+                ! -name 'firstrun.sh' \
+                ! -name 'build_common.sh' \
+                ! -name 'build_bootshim.sh' \
+                -print | sort)
             fi
 
             if [ ${#CANDIDATES[@]} -eq 0 ]; then
