@@ -7,7 +7,6 @@ jobs:
   build-uefi:
     runs-on: ubuntu-22.04
     env:
-      # Форсируем использование актуального окружения и игнорируем ворнинги Node
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
 
@@ -18,37 +17,40 @@ jobs:
         sudo apt install -y build-essential uuid-dev iasl git nasm python3-distutils crossbuild-essential-armel gcc-aarch64-linux-gnu abootimg
 
     - name: Clone EDK2 base
-      run: |
-        git clone https://github.com -b edk2-stable202405 --recursive ../edk2
+      uses: actions/checkout@v4
+      with:
+        repository: tianocore/edk2
+        ref: edk2-stable202405
+        submodules: recursive
+        path: edk2
 
     - name: Clone EDK2 platforms
-      run: |
-        git clone https://github.com ../edk2-platforms
+      uses: actions/checkout@v4
+      with:
+        repository: tianocore/edk2-platforms
+        path: edk2-platforms
 
-    - name: Checkout Current Repo
+    - name: Checkout Current Repo (Port)
       uses: actions/checkout@v4
       with:
         path: edk2-msm8937
 
     - name: Compile EDK2 BaseTools
       run: |
-        cd ../edk2
+        cd edk2
         make -C BaseTools
-
-    - name: Run Firstrun Script
-      run: |
-        cd edk2-msm8937
-        chmod +x scripts/firstrun.sh
-        ./scripts/firstrun.sh
 
     - name: Build UEFI Image
       run: |
         cd edk2-msm8937
+        
+        # Задаем пути к BaseTools вручную, минуя кривой firstrun.sh
         export EDK_TOOLS_PATH=$GITHUB_WORKSPACE/edk2/BaseTools
         source ../edk2/edksetup.sh BaseTools
         
         chmod +x scripts/*.sh
         
+        # Запуск компиляции устройства
         if [ -f "./scripts/build.sh" ]; then
           ./scripts/build.sh
         elif [ -f "./scripts/build_device.sh" ]; then
